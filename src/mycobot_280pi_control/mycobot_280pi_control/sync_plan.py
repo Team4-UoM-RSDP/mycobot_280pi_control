@@ -59,7 +59,7 @@ class Slider_Subscriber(Node):
         self.get_logger().info("MyCobot280 hardware connection established")
 
         # Joint name mapping - update these to match your URDF
-        self.joint_names = [
+        self.arm_joint_names = [
             "link1_to_link2",
             "link2_to_link3",
             "link3_to_link4",
@@ -67,6 +67,18 @@ class Slider_Subscriber(Node):
             "link5_to_link6",
             "link6_to_link6_flange",
         ]
+        self.gripper_joint_name = "gripper_controller"
+        # Range comes from adaptive_gripper.urdf.xacro limits (-0.7, 0.15)
+        self.gripper_lower_limit = -0.7
+        self.gripper_upper_limit = 0.15
+        self.gripper_value_min = 0
+        self.gripper_value_max = 1000
+        self.last_gripper_value = None
+        self.gripper_supported = hasattr(self.mc, "set_gripper_value")
+        if not self.gripper_supported:
+            self.get_logger().warn(
+                "Current pymycobot driver does not expose set_gripper_value(); gripper commands disabled."
+            )
 
         # Rate limiting
         self.last_sync_time = time.time()
@@ -92,7 +104,7 @@ class Slider_Subscriber(Node):
         # Extract angles in correct order
         data_list = []
         missing_joints = []
-        for joint in self.joint_names:
+        for joint in self.arm_joint_names:
             if joint in joint_state_dict:
                 radians_to_angles = round(math.degrees(joint_state_dict[joint]), 3)
                 data_list.append(radians_to_angles)
@@ -113,6 +125,50 @@ class Slider_Subscriber(Node):
                 ),
                 throttle_duration_sec=5.0,
             )
+
+        if self.gripper_joint_name in joint_state_dict:
+            self._sync_gripper(joint_state_dict[self.gripper_joint_name])
+        elif self.gripper_supported:
+            self.get_logger().debug(
+                "JointState missing gripper joint '{}'".format(self.gripper_joint_name)
+            )
+
+    def _sync_gripper(self, gripper_angle_rad):
+        if not self.gripper_supported:
+            return
+
+        gripper_value = self._gripper_angle_to_value(gripper_angle_rad)
+        if gripper_value == self.last_gripper_value:
+            return
+
+        try:
+            self.mc.set_gripper_value(gripper_value, self.speed)
+            self.last_gripper_value = gripper_value
+            self.get_logger().debug(
+                "Sending gripper value {} for {:.3f} rad".format(
+                    gripper_value, gripper_angle_rad
+                )
+            )
+        except Exception as e:
+            self.get_logger().error(
+                "Failed to send gripper command: {}".format(e),
+                throttle_duration_sec=2.0,
+            )
+
+    def _gripper_angle_to_value(self, angle_rad):
+        clamped = max(
+            self.gripper_lower_limit, min(self.gripper_upper_limit, angle_rad)
+        )
+        normalized = (clamped - self.gripper_lower_limit) / (
+            self.gripper_upper_limit - self.gripper_lower_limit
+        )
+        value = int(
+            round(
+                self.gripper_value_min
+                + normalized * (self.gripper_value_max - self.gripper_value_min)
+            )
+        )
+        return value
 
 
 def main(args=None):
