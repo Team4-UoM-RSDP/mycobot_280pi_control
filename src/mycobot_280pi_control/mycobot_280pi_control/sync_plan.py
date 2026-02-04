@@ -72,7 +72,8 @@ class Slider_Subscriber(Node):
         self.gripper_lower_limit = -0.7
         self.gripper_upper_limit = 0.15
         self.gripper_value_min = 0
-        self.gripper_value_max = 1000
+        self.gripper_value_max = 100
+        self.gripper_type = 1  # 1 = Adaptive gripper, 3 = Parallel gripper
         self.last_gripper_value = None
         self.gripper_supported = hasattr(self.mc, "set_gripper_value")
         if not self.gripper_supported:
@@ -142,11 +143,14 @@ class Slider_Subscriber(Node):
             return
 
         try:
-            self.mc.set_gripper_value(gripper_value, self.speed)
+            # Ensure speed is within 0-100 range for gripper
+            gripper_speed = max(0, min(100, self.speed))
+            # Set gripper with type parameter (1 = Adaptive gripper)
+            self.mc.set_gripper_value(gripper_value, gripper_speed, self.gripper_type)
             self.last_gripper_value = gripper_value
             self.get_logger().debug(
-                "Sending gripper value {} for {:.3f} rad".format(
-                    gripper_value, gripper_angle_rad
+                "Sending gripper value {} (speed: {}) for {:.3f} rad".format(
+                    gripper_value, gripper_speed, gripper_angle_rad
                 )
             )
         except Exception as e:
