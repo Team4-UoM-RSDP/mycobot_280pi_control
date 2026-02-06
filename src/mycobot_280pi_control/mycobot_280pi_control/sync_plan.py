@@ -67,6 +67,7 @@ class Slider_Subscriber(Node):
             "link5_to_link6",
             "link6_to_link6_flange",
         ]
+        self.joint_limits_deg = self._load_joint_limits_deg()
         self.gripper_joint_name = "gripper_controller"
         # Range comes from adaptive_gripper.urdf.xacro limits (-0.7, 0.15)
         self.gripper_lower_limit = -0.7
@@ -114,9 +115,17 @@ class Slider_Subscriber(Node):
 
         # Only send if we have all 6 joints
         if len(data_list) == 6:
-            self.get_logger().debug("Sending angles: {}".format(data_list))
+            clamped_angles, had_clamp = self._clamp_angles_deg(data_list)
+            if had_clamp:
+                self.get_logger().warn(
+                    "Clamped joint angles to limits. Command: {} -> {}".format(
+                        data_list, clamped_angles
+                    ),
+                    throttle_duration_sec=2.0,
+                )
+            self.get_logger().debug("Sending angles: {}".format(clamped_angles))
             try:
-                self.mc.send_angles(data_list, self.speed)
+                self.mc.send_angles(clamped_angles, self.speed)
             except Exception as e:
                 self.get_logger().error("Failed to send angles to robot: {}".format(e))
         elif missing_joints:
@@ -173,6 +182,40 @@ class Slider_Subscriber(Node):
             )
         )
         return value
+
+    def _load_joint_limits_deg(self):
+        limits = []
+        try:
+            for joint_index in range(1, 7):
+                joint_max = self.mc.get_joint_max_angle(joint_index)
+                time.sleep(0.05)
+                joint_min = self.mc.get_joint_min_angle(joint_index)
+                time.sleep(0.05)
+                limits.append((joint_min, joint_max))
+            self.get_logger().info("Loaded joint limits (deg): {}".format(limits))
+        except Exception as e:
+            self.get_logger().warn(
+                "Failed to read joint limits from hardware: {}. Using no limits.".format(
+                    e
+                )
+            )
+            limits = [(float("-inf"), float("inf"))] * 6
+        return limits
+
+    def _clamp_angles_deg(self, angles_deg):
+        clamped = []
+        had_clamp = False
+        for i, angle in enumerate(angles_deg):
+            min_lim, max_lim = self.joint_limits_deg[i]
+            if angle < min_lim:
+                clamped.append(min_lim)
+                had_clamp = True
+            elif angle > max_lim:
+                clamped.append(max_lim)
+                had_clamp = True
+            else:
+                clamped.append(angle)
+        return clamped, had_clamp
 
 
 def main(args=None):
